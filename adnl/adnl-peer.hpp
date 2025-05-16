@@ -124,41 +124,6 @@ class AdnlPeerPairImpl : public AdnlPeerPair {
   }
 
  private:
-  void respond_with_nop();
-  void reinit(td::int32 date);
-  td::Result<std::pair<td::actor::ActorId<AdnlNetworkConnection>, bool>> get_conn();
-  void create_channel(pubkeys::Ed25519 pub, td::uint32 date);
-
-  bool received_packet(td::uint64 seqno) const {
-    CHECK(seqno > 0);
-    if (seqno + 64 <= in_seqno_) {
-      return true;
-    }
-    if (seqno > in_seqno_) {
-      return false;
-    }
-    return recv_seqno_mask_ & (1ull << (in_seqno_ - seqno));
-  }
-
-  void add_received_packet(td::uint64 seqno) {
-    CHECK(!received_packet(seqno));
-    if (seqno <= in_seqno_) {
-      recv_seqno_mask_ |= (1ull << (in_seqno_ - seqno));
-    } else {
-      auto old = in_seqno_;
-      in_seqno_ = seqno;
-      if (in_seqno_ - old >= 64) {
-        recv_seqno_mask_ = 1;
-      } else {
-        recv_seqno_mask_ = recv_seqno_mask_ << (in_seqno_ - old);
-        recv_seqno_mask_ |= 1;
-      }
-    }
-  }
-
-  void request_reverse_ping();
-  void request_reverse_ping_result(td::Result<td::Unit> R);
-
   struct Conn {
     class ConnCallback : public AdnlNetworkConnection::Callback {
      public:
@@ -197,6 +162,15 @@ class AdnlPeerPairImpl : public AdnlPeerPair {
                      td::actor::ActorId<Adnl> adnl);
   };
 
+  struct PacketStats {
+    double ts_start = 0.0, ts_end = 0.0;
+    td::uint64 in_packets = 0, in_bytes = 0, in_packets_channel = 0, in_bytes_channel = 0;
+    td::uint64 out_packets = 0, out_bytes = 0, out_packets_channel = 0, out_bytes_channel = 0;
+    td::uint64 out_expired_messages = 0, out_expired_bytes = 0;
+
+    tl_object_ptr<ton_api::adnl_stats_packets> tl() const;
+  };
+
   // Messages waiting for connection or for nochannel rate limiter
   std::queue<std::pair<OutboundAdnlMessage, td::Timestamp>> out_messages_queue_;
   td::uint64 out_messages_queue_total_size_ = 0;
@@ -212,7 +186,6 @@ class AdnlPeerPairImpl : public AdnlPeerPair {
   td::actor::ActorId<dht::Dht> dht_node_;
 
   td::uint32 priority_ = 0;
-
   td::int32 reinit_date_ = 0;
 
   bool channel_ready_ = false;
@@ -271,16 +244,45 @@ class AdnlPeerPairImpl : public AdnlPeerPair {
   td::Timestamp request_reverse_ping_after_ = td::Timestamp::now();
   bool request_reverse_ping_active_ = false;
 
-  struct PacketStats {
-    double ts_start = 0.0, ts_end = 0.0;
-    td::uint64 in_packets = 0, in_bytes = 0, in_packets_channel = 0, in_bytes_channel = 0;
-    td::uint64 out_packets = 0, out_bytes = 0, out_packets_channel = 0, out_bytes_channel = 0;
-    td::uint64 out_expired_messages = 0, out_expired_bytes = 0;
-
-    tl_object_ptr<ton_api::adnl_stats_packets> tl() const;
-  } packet_stats_cur_, packet_stats_prev_, packet_stats_total_;
+  PacketStats packet_stats_cur_, packet_stats_prev_, packet_stats_total_;
   double last_in_packet_ts_ = 0.0, last_out_packet_ts_ = 0.0;
   double started_ts_ = td::Clocks::system();
+
+  void respond_with_nop();
+  void reinit(td::int32 date);
+  td::Result<std::pair<td::actor::ActorId<AdnlNetworkConnection>, bool>> get_conn();
+  void create_channel(pubkeys::Ed25519 pub, td::uint32 date);
+
+  bool received_packet(td::uint64 seqno) const {
+    CHECK(seqno > 0);
+    if (seqno + 64 <= in_seqno_) {
+      return true;
+    }
+    if (seqno > in_seqno_) {
+      return false;
+    }
+    return recv_seqno_mask_ & (1ull << (in_seqno_ - seqno));
+  }
+
+  void add_received_packet(td::uint64 seqno) {
+    CHECK(!received_packet(seqno));
+    if (seqno <= in_seqno_) {
+      recv_seqno_mask_ |= (1ull << (in_seqno_ - seqno));
+    } else {
+      auto old = in_seqno_;
+      in_seqno_ = seqno;
+      if (in_seqno_ - old >= 64) {
+        recv_seqno_mask_ = 1;
+      } else {
+        recv_seqno_mask_ = recv_seqno_mask_ << (in_seqno_ - old);
+        recv_seqno_mask_ |= 1;
+      }
+    }
+  }
+
+  void request_reverse_ping();
+  void request_reverse_ping_result(td::Result<td::Unit> R);
+
   void add_packet_stats(td::uint64 bytes, bool in, bool channel);
   void add_expired_msg_stats(td::uint64 bytes);
   void prepare_packet_stats();
